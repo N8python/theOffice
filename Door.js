@@ -21,6 +21,7 @@ class Door extends Entity {
         if (this.bounds.getSize(new THREE.Vector3()).x > this.bounds.getSize(new THREE.Vector3()).z) {
             this.facingDir.set(0, 0, 1);
         }
+        this.box = new THREE.Box3().setFromObject(this.model, true);
     }
     update(delta) {
         // this.model.children[0].rotation.y += delta;

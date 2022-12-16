@@ -154,22 +154,22 @@ void main() {
     float radius = r;
     for(float i = 0.0; i < 16.0; i++) {
       vec3 sampleDirection = normalize(vec3(
-        rand() /*rand (vUv.x + vUv.y + i)*/ - 0.5,
-        rand() /*rand (vUv.x + vUv.y + i * (i + 1.0))*/ - 0.5,
-        rand() /*rand (vUv.x + vUv.y + i * (i + 1.0) * (i + 2.0))*/ - 0.5
+        rand() - 0.5,
+        rand() - 0.5,
+        rand() - 0.5
       ));
       if (dot(normal, sampleDirection) < 0.0) {
         sampleDirection *= -1.0;
       }
-      float moveAmt = rand() * rand() /*rand(vUv.x + vUv.y + i) * rand(2.0 * (vUv.x + vUv.y + i))*/;
+      float moveAmt = rand() * rand();
       vec3 samplePos = worldPos + radius * moveAmt * sampleDirection;
       vec4 offset = projViewMat * vec4(samplePos, 1.0);
       offset.xyz /= offset.w;
       offset.xyz = offset.xyz * 0.5 + 0.5;
       float sampleDepth = texture2D(sceneDepth, offset.xy).x;
-      float distSample =linearize_depth(sampleDepth, 0.1, 1000.0);// length(getWorldPos(sampleDepth, vUv) - cameraPos);
-      float distWorld = linearize_depth(offset.z, 0.1, 1000.0);//length(samplePos - cameraPos);
-      float rangeCheck = smoothstep(0.0, 1.0, radius / (radius/*max(25.0 - 0.5 * distSample, 1.0)*/ * abs(distSample - distWorld)));
+      float distSample =linearize_depth(sampleDepth, 0.1, 1000.0);
+      float distWorld = linearize_depth(offset.z, 0.1, 1000.0);
+      float rangeCheck = smoothstep(0.0, 1.0, radius / (radius * abs(distSample - distWorld)));
       if (distSample < distWorld) {
         occluded += rangeCheck * dot(sampleDirection, normal);
       }

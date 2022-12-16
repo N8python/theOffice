@@ -54,12 +54,13 @@ async function main() {
     scene.background = environment;
     const keys = {};
     document.addEventListener('keydown', (e) => {
+        world.registerKey(e.key);
         keys[e.key] = true;
     });
     document.addEventListener('keyup', (e) => {
         keys[e.key] = false;
     });
-    const world = new World(scene, new THREE.Vector2(clientWidth, clientHeight), camera, {
+    const world = new World(renderer, scene, new THREE.Vector2(clientWidth, clientHeight), camera, {
         controls,
         keys
     });

@@ -21,28 +21,14 @@ import {
     GLTFLoader
 } from 'https://unpkg.com/three@0.142.0/examples/jsm/loaders/GLTFLoader.js';
 import { MeshSurfaceSampler } from "https://unpkg.com/three@0.142.0/examples/jsm/math/MeshSurfaceSampler.js";
-const playerDirection = new THREE.Vector3();
-const getForwardVector = function(camera) {
-    camera.getWorldDirection(playerDirection);
-    playerDirection.y = 0;
-    playerDirection.normalize();
-    return playerDirection;
-}
-
-const getSideVector = function(camera) {
-    camera.getWorldDirection(playerDirection);
-    playerDirection.y = 0;
-    playerDirection.normalize();
-    playerDirection.cross(camera.up);
-    return playerDirection;
-}
-
+import { FullScreenQuad } from 'https://unpkg.com/three@0.142.0/examples/jsm/postprocessing/Pass.js';
 class World {
-    constructor(scene, resolution, camera, {
+    constructor(renderer, scene, resolution, camera, {
         controls,
         keys
     }) {
         this.entities = [];
+        this.renderer = renderer;
         this.SIZE = 2048;
         this.resolution = resolution;
         this.roomData = new Uint8Array(this.SIZE * this.SIZE);
@@ -52,9 +38,31 @@ class World {
         this.player = new Player({
             position: new THREE.Vector3(0, 0, 0)
         });
+        this.add(this.player);
         this.camera = camera;
         this.controls = controls;
         this.keys = keys;
+        this.DEBUG = false;
+        this.playerMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.75, 6), new THREE.MeshStandardMaterial({ envMap: this.scene.background }));
+        this.scene.add(this.playerMesh);
+        const lineGeo = new THREE.BufferGeometry(); //.setFromPoints([line.start, line.end]);
+        const lineMat = new THREE.LineBasicMaterial({ color: 0x00ff00 });
+        const lineMesh = new THREE.Line(lineGeo, lineMat);
+        this.lineMesh = lineMesh;
+        this.scene.add(this.lineMesh);
+        this.queryTarget = new THREE.WebGLRenderTarget(8192, 1, {
+            minFilter: THREE.NearestFilter,
+            magFilter: THREE.NearestFilter,
+            format: THREE.RGBAFormat,
+            type: THREE.FloatType,
+            depthBuffer: false,
+            stencilBuffer: false
+        });
+        this.visibleBox = new THREE.Box3();
+        const helper = new THREE.Box3Helper(this.visibleBox, 0xffffff);
+        this.boxHelper = helper;
+        this.scene.add(helper);
+
     }
     async initMaterials() {
         const carpetTex = await this.loader.loadAsync("textures/carpet.png");
@@ -597,6 +605,8 @@ float lightFunc(float x) {
         ceiling.position.set(-0.5, 12, -0.5);
         this.scene.add(floor);
         this.scene.add(ceiling);
+        this.floor = floor;
+        this.ceiling = ceiling;
         floor.updateMatrix();
         ceiling.updateMatrix();
         floor.updateMatrixWorld();
@@ -612,8 +622,69 @@ float lightFunc(float x) {
             return x;
         }), true);
         this.mergedGeo = mergedGeo;
-        const bvh = new MeshBVH(mergedGeo, { lazyGeneration: false, strategy: SAH });
+        const bvh = new MeshBVH(mergedGeo, { lazyGeneration: false, strategy: SAH, maxLeafTris: 2 });
         this.bvh = bvh;
+        const occlusionBVH = new MeshBVH(BufferGeometryUtils.mergeBufferGeometries([wallMesh.geometry.clone().applyMatrix4(wallMesh.matrixWorld)].map(x => {
+            // delete all attributes that aren't position or normals
+            for (const key of Object.keys(x.attributes)) {
+                if (key !== "position" && key !== "normal") {
+                    delete x.attributes[key];
+                }
+            }
+            return x;
+        }), true), { lazyGeneration: false, strategy: SAH, maxLeafTris: 2 });
+        this.occlusionBVH = occlusionBVH;
+        const queryQuad = new FullScreenQuad(new THREE.ShaderMaterial({
+            uniforms: {
+                bvh: { value: new MeshBVHUniformStruct() },
+                origin: { value: this.player.position }
+            },
+            vertexShader: /*glsl*/ `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: /*glsl*/ `
+            precision highp isampler2D;
+            precision highp usampler2D;
+            varying vec3 vWorldPosition;
+            varying vec3 vNormal;
+            varying vec2 vUv;
+            uniform samplerCube envMap;
+            uniform float bounces;
+            ${ shaderStructs }
+            ${ shaderIntersectFunction }
+            uniform BVH bvh;
+            uniform vec3 origin;
+            void main() {
+               vec3 rayOrigin = origin;
+               vec3 rayDirection = vec3(sin(vUv.x * 6.283185307179586), 0.0, cos(vUv.x * 6.283185307179586));
+               uvec4 faceIndices = uvec4( 0u );
+               vec3 faceNormal = vec3( 0.0, 0.0, 1.0 );
+               vec3 barycoord = vec3( 0.0 );
+               float side = 1.0;
+               float dist = 0.0;
+               bvhIntersectFirstHit( bvh, rayOrigin, rayDirection, faceIndices, faceNormal, barycoord, side, dist );
+               vec3 hitPos = rayOrigin + rayDirection * dist;
+               gl_FragColor = vec4(hitPos, 1.0);
+            }
+            `
+        }));
+        queryQuad.material.uniforms.bvh.value.updateFrom(occlusionBVH);
+        this.queryQuad = queryQuad;
+        const bvhMesh = new THREE.Mesh(mergedGeo, new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true }));
+        bvhMesh.geometry.boundsTree = bvh;
+        this.bvhMeshViz = bvhMesh;
+        const viz = new MeshBVHVisualizer(bvhMesh, 20);
+        viz.visible = true;
+        viz.color.set(0xffff00);
+        viz.update();
+        this.bvhMeshVizDepth = viz;
+        this.scene.add(bvhMesh);
+        this.scene.add(viz);
+
         // Generate line segments that represent paintings from rooms and lineBoxes
         this.generatePaintings(rooms);
         const center = rooms[0].getCenter(new THREE.Vector2());
@@ -625,7 +696,13 @@ float lightFunc(float x) {
     }
     update(delta) {
         for (const entity of this.entities) {
-            entity.update(delta);
+            if (entity !== this.player) {
+                entity.update(delta);
+            }
+            // Occlusion culling
+            if (entity.model && entity.box) {
+                entity.model.visible = this.visibleBox.intersectsBox(entity.box);
+            }
         }
         this.ceilingShader.uniforms.time.value = performance.now() / 1000;
         for (let i = 0; i < 5; i++) {
@@ -634,58 +711,65 @@ float lightFunc(float x) {
             for (const entity of this.entities) {
                 if (entity instanceof Door && !entity.open) {
                     // Handle collision logic
-                    if (entity.bounds.containsPoint(this.player.position)) {
-                        const doorCenter = entity.bounds.getCenter(new THREE.Vector3());
-                        const playerCenter = this.player.position;
-                        playerCenter.y = 6;
-                        doorCenter.y = 6;
-                        const dir = doorCenter.clone().sub(playerCenter).normalize();
-
-                        const size = entity.bounds.getSize(new THREE.Vector3());
-                        const d = new THREE.Vector2(Math.abs(playerCenter.x - doorCenter.x), Math.abs(playerCenter.z - doorCenter.z)).sub(new THREE.Vector2(size.x / 2, size.z / 2));
-                        if (size.x > size.z) {
-                            dir.x = 0;
-                        } else {
-                            dir.z = 0;
-                        }
-                        const dist = Math.min(Math.max(d.x, d.y), 0) + new THREE.Vector2(Math.max(d.x, 0), Math.max(d.y, 0)).length();
-                        this.player.position.add(dir.multiplyScalar(dist));
-                    }
+                    this.player.collideDoor(entity);
                 }
             }
         }
+        this.player.move(delta);
         this.camera.position.copy(this.player.position);
-        const speedFactor = 0.25;
-        if (this.controls.isLocked) {
-            if (this.keys["w"]) {
-                this.player.horizontalVelocity.add(getForwardVector(this.camera).multiplyScalar(speedFactor * delta));
-            }
-
-            if (this.keys["s"]) {
-                this.player.horizontalVelocity.add(getForwardVector(this.camera).multiplyScalar(-speedFactor * delta));
-            }
-
-            if (this.keys["a"]) {
-                this.player.horizontalVelocity.add(getSideVector(this.camera).multiplyScalar(-speedFactor * delta));
-            }
-
-            if (this.keys["d"]) {
-                this.player.horizontalVelocity.add(getSideVector(this.camera).multiplyScalar(speedFactor * delta));
-            }
-            /* if (keys[" "]) {
-                 if (this.player.onGround) {
-                     this.player.velocity.y = 125.0;
-                 }
-             }*/
-        }
+        this.playerMesh.position.copy(this.player.position);
         // Make the players head bob
-        /* const slowOffset = 1.0 * Math.sin(performance.now() / 1000);
-         const fastOffset = 1.0 * Math.sin(performance.now() / 333);
-         camera.position.y += slowOffset + (fastOffset - slowOffset) * Math.min(10 * this.player.horizontalVelocity.length(), 1);*/
         const slowOffset = 0.25 * Math.sin(performance.now() / 1000);
         const fastOffset = 0.25 * Math.sin(performance.now() / 75);
-        this.camera.position.y += slowOffset + (fastOffset - slowOffset) * Math.min(10 * this.player.horizontalVelocity.length(), 1);
-
+        if (this.DEBUG) {
+            this.camera.position.y += 50;
+            this.camera.lookAt(this.player.position);
+        } else {
+            this.camera.position.y += slowOffset + (fastOffset - slowOffset) * Math.min(10 * this.player.horizontalVelocity.length(), 1);
+        }
+        this.computeOcclusionVolume();
+        this.playerMesh.visible = this.DEBUG;
+        this.ceiling.visible = !this.DEBUG;
+        this.bvhMeshViz.visible = this.DEBUG;
+        this.bvhMeshVizDepth.visible = this.DEBUG;
+        this.boxHelper.visible = this.DEBUG;
+        this.lineMesh.visible = this.DEBUG;
+    }
+    computeOcclusionVolume() {
+        // Cast 360 rays from the players position in a circle along the xz plane against this.bvh
+        const points = [];
+        const ray = new THREE.Ray(this.player.position, new THREE.Vector3());
+        for (let i = 0; i < 2 * Math.PI; i += Math.PI / 360) {
+            ray.direction.set(Math.cos(i), 0, Math.sin(i));
+            const intersection = this.occlusionBVH.raycastFirst(ray, THREE.DoubleSide);
+            if (intersection) {
+                points.push(ray.origin, intersection.point);
+            }
+        }
+        this.visibleBox.setFromPoints(points);
+        if (this.DEBUG) {
+            this.lineMesh.geometry.setFromPoints(points);
+            this.lineMesh.geometry.needsUpdate = true;
+            this.lineMesh.geometry.attributes.position.needsUpdate = true;
+            this.lineMesh.geometry.computeBoundingBox();
+            this.lineMesh.geometry.computeBoundingSphere();
+        }
+        /* console.time();
+         this.renderer.setRenderTarget(this.queryTarget);
+         this.queryQuad.render(this.renderer);
+         this.renderer.setRenderTarget(null);
+         const pixels = new Float32Array(4 * this.queryTarget.width * this.queryTarget.height);
+         this.renderer.readRenderTargetPixels(this.queryTarget, 0, 0, this.queryTarget.width, this.queryTarget.height, pixels);
+         const points = [];
+         for (let i = 0; i < pixels.length; i += 4) {
+             points.push(this.player.position, new THREE.Vector3(pixels[i], pixels[i + 1], pixels[i + 2]));
+         }
+         this.lineMesh.geometry.setFromPoints(points);
+         this.lineMesh.geometry.needsUpdate = true;
+         this.lineMesh.geometry.attributes.position.needsUpdate = true;
+         this.lineMesh.geometry.computeBoundingBox();
+         this.lineMesh.geometry.computeBoundingSphere();
+         console.timeEnd();*/
     }
     registerClick() {
         const raycaster = new THREE.Raycaster();
@@ -707,6 +791,11 @@ float lightFunc(float x) {
             if (iDist < geoIntersection.distance && iDist < 7.5) {
                 intersections[0][0].openUp(ray.origin);
             }
+        }
+    }
+    registerKey(key) {
+        if (key === "i") {
+            this.DEBUG = !this.DEBUG;
         }
     }
     generatePaintings(rooms) {
@@ -1215,7 +1304,6 @@ float lightFunc(float x) {
                 new THREE.Vector3(posAttr.getX(i + 2), posAttr.getY(i + 2), posAttr.getZ(i + 2))
             );
             const normal = tri.getNormal(new THREE.Vector3());
-            // console.log(normal);
             if (Math.abs(normal.z) > Math.abs(normal.x)) {
                 yTris.push(tri);
             } else {
