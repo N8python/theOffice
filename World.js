@@ -255,11 +255,11 @@ class World {
             vec3 norm = (viewMatrixInv * vec4(vNormal, 0.0)).xyz * ( gl_FrontFacing ? 1.0 : - 1.0);
             vec2 worldUv;
             if (abs(norm.y) > 0.9) {
-                worldUv = vWorldPosition.xz * 0.5;
+                worldUv = vWorldPosition.xz;
             } else if (abs(norm.x) > 0.9) {
-                worldUv = vWorldPosition.zy * 0.5;
+                worldUv = vWorldPosition.zy;
             } else {
-                worldUv = vWorldPosition.xy * 0.5;
+                worldUv = vWorldPosition.xy;
             }
             vec4 mapTexel = vec4(textureNoTile(plaster, worldUv), 1.0);
             bool molding = false;
@@ -706,8 +706,13 @@ float lightFunc(float x) {
         }
         this.ceilingShader.uniforms.time.value = performance.now() / 1000;
         for (let i = 0; i < 5; i++) {
+            for (const entity of this.entities) {
+                if (entity instanceof Door && !entity.open) {
+                    // Handle collision logic
+                    this.player.collideDoor(entity);
+                }
+            }
             this.player.update(delta / 5, this.bvh);
-            // Collide the player with doors
             for (const entity of this.entities) {
                 if (entity instanceof Door && !entity.open) {
                     // Handle collision logic

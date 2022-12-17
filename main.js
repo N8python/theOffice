@@ -45,6 +45,8 @@ async function main() {
     scene.add(controls.getObject());
     const stats = new Stats();
     stats.showPanel(0);
+    stats.dom.style.left = "100%";
+    stats.dom.style.transform = "translateX(-100%)";
     document.body.appendChild(stats.dom);
     // Setup scene
     // Skybox
@@ -113,6 +115,9 @@ async function main() {
     blueNoise.repeat.set(1, 1);
     blueNoise.minFilter = THREE.NearestFilter;
     blueNoise.magFilter = THREE.NearestFilter;
+    const brainIcon = await new THREE.TextureLoader().loadAsync("textures/brainicon.png");
+    brainIcon.flipY = false;
+    brainIcon.encoding = THREE.sRGBEncoding;
     const clock = new THREE.Clock();
     document.addEventListener("click", () => {
         controls.lock();
@@ -163,6 +168,8 @@ async function main() {
         effectFinish.uniforms['resolution'].value = new THREE.Vector2(clientWidth, clientHeight);
         effectFinish.uniforms['time'].value = performance.now() / 1000;
         effectFinish.uniforms['r'].value = effectController.radius;
+        effectFinish.uniforms['brainIcon'].value = brainIcon;
+        effectFinish.uniforms['level'].value = world.player.sanity;
         composer.render();
         stats.update();
         requestAnimationFrame(animate);

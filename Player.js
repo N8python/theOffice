@@ -23,8 +23,10 @@ class Player extends CapsuleEntity {
     }) {
         super(position, 0.75, 5);
         this.speedFactor = 0.25;
+        this.sanity = 0.5;
     }
     update(delta, bvh) {
+        this.sanity = 0.5 + 0.5 * Math.sin(performance.now() / 1000);
         super.update(delta, bvh);
     }
     move(delta) {
